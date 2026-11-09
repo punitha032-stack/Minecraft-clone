@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Minecraft 3D Clone</title>
+<style>
+  body { margin: 0; overflow: hidden; background: #87CEEB; font-family: Arial, sans-serif; }
+  canvas { display: block; }
+  #ui {
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    color: white;
+    background: rgba(0,0,0,0.65);
+    padding: 12px 16px;
+    border-radius: 10px;
+    z-index: 10;
+    line-height: 1.5;
+    font-size: 14px;
+  }
+  #hotbar {
+    position: absolute;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 6px;
+    z-index: 10;
+  }
+  .slot {
+    width: 48px;
+    height: 48px;
+    background: rgba(0,0,0,0.6);
+    border: 3px solid #555;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .slot.active {
+    border-color: #fff;
+    background: rgba(255,255,255,0.25);
+  }
+</style>
+</head>
+<body>
+<div id="ui">
+  <b>Minecraft Clone</b><br>
+  WASD = Move<br>
+  Space = Jump<br>
+  Mouse = Look<br>
+  Left Click = Break<br>
+  Right Click = Place<br>
+  1-5 = Select block
+</div>
+
+<div id="hotbar">
+  <div class="slot active" data-type="grass">Grass</div>
+  <div class="slot" data-type="dirt">Dirt</div>
+  <div class="slot" data-type="stone">Stone</div>
+  <div class="slot" data-type="wood">Wood</div>
+  <div class="slot" data-type="leaves">Leaves</div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x87CEEB);
+scene.fog = new THREE.Fog(0x87CEEB, 40, 120);
+
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 300);
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+document.body.appendChild(renderer.domElement);
+
+// Lights
+const sun = new THREE.DirectionalLight(0xffffff, 1.1);
+sun.position.set(40, 60, 30);
+sun.castShadow = true;
+scene.add(sun);
+scene.add(new THREE.AmbientLight(0x6688aa, 0.55));
+
+// Materials
+const mats = {
+  grass:  new THREE.MeshLambertMaterial({color: 0x5D9C3F}),
+  dirt:   new THREE.MeshLambertMaterial({color: 0x8B5A2B}),
+  stone:  new THREE.MeshLambertMaterial({color: 0x777777}),
+  wood:   new THREE.MeshLambertMaterial({color: 0x8B5A2B}),
+  leaves: new THREE.MeshLambertMaterial({color: 0x3A7D34})
+};
+
+const geo = new THREE.BoxGeometry(1,1,1);
+const blocks = new Map(); // key "x,y,z" -> mesh
+
+function key(x,y,z){ return `${x},${y},${z}`; }
+
+function addBlock(x,y,z, type){
+  const k = key(x,y,z);
+  if(blocks.has(k)) return;
+  const mesh = new THREE.Mesh(geo, mats[type] || mats.grass);
+  mesh.position.set(x,y,z);
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  mesh.userData = {type, x, y, z};
+  scene.add(mesh);
+  blocks.set(k, mesh);
+}
+
+function removeBlock(x,y,z){
+  const k = key(x,y,z);
+  const mesh = blocks.get(k);
+  if(mesh){
+    scene.remove(mesh);
+    blocks.delete(k);
+  }
+}
+
+// Generate terrain
+for(let x=-30; x<30; x++){
+  for(let z=-30; z<30; z++){
+    const h = Math.floor(
+      Math.sin(x*0.12)*3 +
+      Math.cos(z*0.12)*3 +
+      Math.sin((x+z)*0.08)*2
+    );
+    for(let y=-3; y<=h; y++){
+      let type = "grass";
+      if(y < h) type = "dirt";
+      if(y < h-3) type = "stone";
+      addBlock(x, y, z, type);
+    }
+
+    // Trees
+    if(Math.random() < 0.03 && h > 0){
+      const trunkH = 4 + Math.floor(Math.random()*3);
+      for(let t=1; t<=trunkH; t++){
+        addBlock(x, h+t, z, "wood");
+      }
+      // Leaves
+      for(let lx=-2; lx<=2; lx++){
+        for(let lz=-2; lz<=2; lz++){
+          for(let ly=0; ly<=2; ly++){
+            if(Math.abs(lx)+Math.abs(lz)+ly < 4){
+              addBlock(x+lx, h+trunkH+ly, z+lz, "leaves");
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// Player controls
+let moveF=false, moveB=false, moveL=false, moveR=false;
+let canJump=false;
+const velocity = new THREE.Vector3();
+let yaw=0, pitch=0;
+let selected = "grass";
+
+document.addEventListener("keydown", e=>{
+  if(e.code==="KeyW") moveF=true;
+  if(e.code==="KeyS") moveB=true;
+  if(e.code==="KeyA") moveL=true;
+  if(e.code==="KeyD") moveR=true;
+  if(e.code==="Space" && canJump){ velocity.y=0.22; canJump=false; }
+  if(e.key>="1" && e.key<="5"){
+    const types = ["grass","dirt","stone","wood","leaves"];
+    selected = types[parseInt(e.key)-1];
+    document.querySelectorAll(".slot").forEach((s,i)=>{
+      s.classList.toggle("active", i===parseInt(e.key)-1);
+    });
+  }
+});
+document.addEventListener("keyup", e=>{
+  if(e.code==="KeyW") moveF=false;
+  if(e.code==="KeyS") moveB=false;
+  if(e.code==="KeyA") moveL=false;
+  if(e.code==="KeyD") moveR=false;
+});
+
+// Mouse
+document.body.addEventListener("click", ()=> document.body.requestPointerLock());
+document.addEventListener("mousemove", e=>{
+  if(document.pointerLockElement !== document.body) return;
+  yaw   -= e.movementX * 0.0022;
+  pitch -= e.movementY * 0.0022;
+  pitch = Math.max(-1.45, Math.min(1.45, pitch));
+});
+
+// Raycasting for break/place
+const raycaster = new THREE.Raycaster();
+const mouse = new THREE.Vector2(0,0); // center of screen
+
+document.addEventListener("mousedown", e=>{
